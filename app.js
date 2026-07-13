@@ -6,13 +6,21 @@ const estado = document.getElementById("estado");
 
 async function cargarProductos() {
   try {
-    // Date.now() evita que el navegador muestre precios antiguos.
-    const respuesta = await fetch(`${CSV_URL}&actualizacion=${Date.now()}`, {
+    estado.style.display = "block";
+    estado.textContent = "Cargando productos...";
+
+    const separador = CSV_URL.includes("?") ? "&" : "?";
+    const urlActualizada =
+      `${CSV_URL}${separador}actualizacion=${Date.now()}`;
+
+    const respuesta = await fetch(urlActualizada, {
       cache: "no-store"
     });
 
     if (!respuesta.ok) {
-      throw new Error("No se pudo leer la hoja de cálculo.");
+      throw new Error(
+        `No se pudo leer la hoja. Código: ${respuesta.status}`
+      );
     }
 
     const textoCSV = await respuesta.text();
@@ -22,39 +30,73 @@ async function cargarProductos() {
       throw new Error("La hoja no contiene productos.");
     }
 
-    const encabezados = filas[0].map((encabezado) =>
-      encabezado.trim().toLowerCase()
+    const encabezados = filas[0].map((encabezado, indice) => {
+      let encabezadoLimpio = encabezado.trim().toLowerCase();
+
+      // Elimina un carácter invisible que a veces añade Google Sheets.
+      if (indice === 0) {
+        encabezadoLimpio = encabezadoLimpio.replace(/^\uFEFF/, "");
+      }
+
+      return encabezadoLimpio;
+    });
+
+    const columnasNecesarias = [
+      "id",
+      "nombre",
+      "descripcion",
+      "precio",
+      "imagen",
+      "activo"
+    ];
+
+    const faltantes = columnasNecesarias.filter(
+      (columna) => !encabezados.includes(columna)
     );
+
+    if (faltantes.length > 0) {
+      throw new Error(
+        `Faltan columnas en la hoja: ${faltantes.join(", ")}`
+      );
+    }
 
     const productos = filas
       .slice(1)
-      .filter((fila) => fila.some((celda) => celda.trim() !== ""))
+      .filter((fila) =>
+        fila.some((celda) => String(celda).trim() !== "")
+      )
       .map((fila) => {
         const producto = {};
 
         encabezados.forEach((encabezado, indice) => {
-          producto[encabezado] = fila[indice]?.trim() || "";
+          producto[encabezado] =
+            String(fila[indice] ?? "").trim();
         });
 
         return producto;
       })
-      .filter((producto) => producto.activo.toUpperCase() === "SI");
+      .filter(
+        (producto) =>
+          producto.activo.toUpperCase() === "SI"
+      );
 
     mostrarProductos(productos);
   } catch (error) {
-    console.error(error);
+    console.error("Error al cargar productos:", error);
 
+    contenedor.innerHTML = "";
+    estado.style.display = "block";
     estado.innerHTML = `
       <div class="error">
-        No se pudieron cargar los productos.<br>
-        Revisa que la hoja continúe publicada.
+        <strong>No se pudieron cargar los productos.</strong>
+        <br><br>
+        ${escaparHTML(error.message)}
       </div>
     `;
   }
 }
 
 function mostrarProductos(productos) {
-  estado.style.display = "none";
   contenedor.innerHTML = "";
 
   if (productos.length === 0) {
@@ -63,6 +105,8 @@ function mostrarProductos(productos) {
     return;
   }
 
+  estado.style.display = "none";
+
   productos.forEach((producto) => {
     const tarjeta = document.createElement("article");
     tarjeta.className = "producto";
@@ -70,11 +114,11 @@ function mostrarProductos(productos) {
     const imagen = document.createElement("img");
     imagen.className = "producto-imagen";
     imagen.src = `assets/products/${producto.imagen}`;
-    imagen.alt = producto.nombre;
+    imagen.alt = producto.nombre || "Imagen del producto";
     imagen.loading = "lazy";
 
     imagen.addEventListener("error", () => {
-      imagen.style.display = "none";
+      imagen.remove();
     });
 
     const contenido = document.createElement("div");
@@ -103,6 +147,111 @@ function mostrarProductos(productos) {
     boton.type = "button";
     boton.textContent = "Ver producto";
 
+    boton.addEventListener("click", () => {
+      alert(`Seleccionaste: ${producto.nombre}`);
+    });
+
     pie.append(precio, boton);
-    contenido.append(identificador, nombre, descripcion, pie);
-    tarjeta.append(imagen, contenido
+
+    contenido.append(
+      identificador,
+      nombre,
+      descripcion,
+      pie
+    );
+
+    tarjeta.append(imagen, contenido);
+    contenedor.appendChild(tarjeta);
+  });
+}
+
+function formatearPrecio(valor) {
+  const valorLimpio = String(valor)
+    .trim()
+    .replace(/\s/g, "")
+    .replace(",", ".");
+
+  const numero = Number(valorLimpio);
+
+  if (Number.isNaN(numero)) {
+    return `S/ ${valor}`;
+  }
+
+  return new Intl.NumberFormat("es-PE", {
+    style: "currency",
+    currency: "PEN",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
+  }).format(numero);
+}
+
+function convertirCSV(texto) {
+  const filas = [];
+  let fila = [];
+  let celda = "";
+  let dentroDeComillas = false;
+
+  for (let i = 0; i < texto.length; i++) {
+    const caracter = texto[i];
+    const siguiente = texto[i + 1];
+
+    if (caracter === '"') {
+      if (dentroDeComillas && siguiente === '"') {
+        celda += '"';
+        i++;
+      } else {
+        dentroDeComillas = !dentroDeComillas;
+      }
+    } else if (
+      caracter === "," &&
+      !dentroDeComillas
+    ) {
+      fila.push(celda);
+      celda = "";
+    } else if (
+      (caracter === "\n" || caracter === "\r") &&
+      !dentroDeComillas
+    ) {
+      if (caracter === "\r" && siguiente === "\n") {
+        i++;
+      }
+
+      fila.push(celda);
+
+      if (
+        fila.some(
+          (valor) => String(valor).trim() !== ""
+        )
+      ) {
+        filas.push(fila);
+      }
+
+      fila = [];
+      celda = "";
+    } else {
+      celda += caracter;
+    }
+  }
+
+  if (celda !== "" || fila.length > 0) {
+    fila.push(celda);
+
+    if (
+      fila.some(
+        (valor) => String(valor).trim() !== ""
+      )
+    ) {
+      filas.push(fila);
+    }
+  }
+
+  return filas;
+}
+
+function escaparHTML(texto) {
+  const elemento = document.createElement("div");
+  elemento.textContent = texto;
+  return elemento.innerHTML;
+}
+
+cargarProductos();
