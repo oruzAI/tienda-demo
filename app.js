@@ -1,216 +1,32 @@
 const CSV_URL =
   "https://docs.google.com/spreadsheets/d/e/2PACX-1vRRpSFGoY5UUmSbVSvOurGCmWkB5SV3ICO-UG1uHtjQPnQvxHPaXtsHXwUyTMSr6LMNBEQZ7aYgERXc/pub?gid=1714344078&single=true&output=csv";
 
-const contenedor = document.getElementById("productos");
+const productosContenedor = document.getElementById("productos");
 const estado = document.getElementById("estado");
-
-async function cargarProductos() {
-  try {
-    estado.style.display = "block";
-    estado.textContent = "Cargando productos...";
-
-    const separador = CSV_URL.includes("?") ? "&" : "?";
-    const urlActualizada =
-      `${CSV_URL}${separador}actualizacion=${Date.now()}`;
-
-    const respuesta = await fetch(urlActualizada, {
-      cache: "no-store"
-    });
-
-    if (!respuesta.ok) {
-      throw new Error(
-        `No se pudo leer la hoja. Código: ${respuesta.status}`
-      );
-    }
-
-    const textoCSV = await respuesta.text();
-    const filas = convertirCSV(textoCSV);
-
-    if (filas.length < 2) {
-      throw new Error("La hoja no contiene productos.");
-    }
-
-    const encabezados = filas[0].map((encabezado, indice) => {
-      let encabezadoLimpio = encabezado.trim().toLowerCase();
-
-      // Elimina un carácter invisible que a veces añade Google Sheets.
-      if (indice === 0) {
-        encabezadoLimpio = encabezadoLimpio.replace(/^\uFEFF/, "");
-      }
-
-      return encabezadoLimpio;
-    });
-
-    const columnasNecesarias = [
-      "id",
-      "nombre",
-      "descripcion",
-      "precio",
-      "imagen",
-      "activo"
-    ];
-
-    const faltantes = columnasNecesarias.filter(
-      (columna) => !encabezados.includes(columna)
-    );
-
-    if (faltantes.length > 0) {
-      throw new Error(
-        `Faltan columnas en la hoja: ${faltantes.join(", ")}`
-      );
-    }
-
-    const productos = filas
-      .slice(1)
-      .filter((fila) =>
-        fila.some((celda) => String(celda).trim() !== "")
-      )
-      .map((fila) => {
-        const producto = {};
-
-        encabezados.forEach((encabezado, indice) => {
-          producto[encabezado] =
-            String(fila[indice] ?? "").trim();
-        });
-
-        return producto;
-      })
-      .filter(
-        (producto) =>
-          producto.activo.toUpperCase() === "SI"
-      );
-
-    mostrarProductos(productos);
-  } catch (error) {
-    console.error("Error al cargar productos:", error);
-
-    contenedor.innerHTML = "";
-    estado.style.display = "block";
-    estado.innerHTML = `
-      <div class="error">
-        <strong>No se pudieron cargar los productos.</strong>
-        <br><br>
-        ${escaparHTML(error.message)}
-      </div>
-    `;
-  }
-}
-
-function mostrarProductos(productos) {
-  contenedor.innerHTML = "";
-
-  if (productos.length === 0) {
-    estado.style.display = "block";
-    estado.textContent = "No hay productos activos.";
-    return;
-  }
-
-  estado.style.display = "none";
-
-  productos.forEach((producto) => {
-    const tarjeta = document.createElement("article");
-    tarjeta.className = "producto";
-
-    const imagen = document.createElement("img");
-    imagen.className = "producto-imagen";
-    imagen.src = `assets/products/${producto.imagen}`;
-    imagen.alt = producto.nombre || "Imagen del producto";
-    imagen.loading = "lazy";
-
-    imagen.addEventListener("error", () => {
-      imagen.remove();
-    });
-
-    const contenido = document.createElement("div");
-    contenido.className = "producto-contenido";
-
-    const identificador = document.createElement("span");
-    identificador.className = "producto-id";
-    identificador.textContent = `PRODUCTO ${producto.id}`;
-
-    const nombre = document.createElement("h2");
-    nombre.textContent = producto.nombre;
-
-    const descripcion = document.createElement("p");
-    descripcion.className = "producto-descripcion";
-    descripcion.textContent = producto.descripcion;
-
-    const pie = document.createElement("div");
-    pie.className = "producto-pie";
-
-    const precio = document.createElement("span");
-    precio.className = "precio";
-    precio.textContent = formatearPrecio(producto.precio);
-
-    const boton = document.createElement("button");
-    boton.className = "boton";
-    boton.type = "button";
-    boton.textContent = "Ver producto";
-
-    boton.addEventListener("click", () => {
-      alert(`Seleccionaste: ${producto.nombre}`);
-    });
-
-    pie.append(precio, boton);
-
-    contenido.append(
-      identificador,
-      nombre,
-      descripcion,
-      pie
-    );
-
-    tarjeta.append(imagen, contenido);
-    contenedor.appendChild(tarjeta);
-  });
-}
-
-function formatearPrecio(valor) {
-  const valorLimpio = String(valor)
-    .trim()
-    .replace(/\s/g, "")
-    .replace(",", ".");
-
-  const numero = Number(valorLimpio);
-
-  if (Number.isNaN(numero)) {
-    return `S/ ${valor}`;
-  }
-
-  return new Intl.NumberFormat("es-PE", {
-    style: "currency",
-    currency: "PEN",
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2
-  }).format(numero);
-}
 
 function convertirCSV(texto) {
   const filas = [];
   let fila = [];
   let celda = "";
-  let dentroDeComillas = false;
+  let entreComillas = false;
 
   for (let i = 0; i < texto.length; i++) {
     const caracter = texto[i];
     const siguiente = texto[i + 1];
 
     if (caracter === '"') {
-      if (dentroDeComillas && siguiente === '"') {
+      if (entreComillas && siguiente === '"') {
         celda += '"';
         i++;
       } else {
-        dentroDeComillas = !dentroDeComillas;
+        entreComillas = !entreComillas;
       }
-    } else if (
-      caracter === "," &&
-      !dentroDeComillas
-    ) {
+    } else if (caracter === "," && !entreComillas) {
       fila.push(celda);
       celda = "";
     } else if (
       (caracter === "\n" || caracter === "\r") &&
-      !dentroDeComillas
+      !entreComillas
     ) {
       if (caracter === "\r" && siguiente === "\n") {
         i++;
@@ -218,11 +34,7 @@ function convertirCSV(texto) {
 
       fila.push(celda);
 
-      if (
-        fila.some(
-          (valor) => String(valor).trim() !== ""
-        )
-      ) {
+      if (fila.some((valor) => valor.trim() !== "")) {
         filas.push(fila);
       }
 
@@ -235,23 +47,126 @@ function convertirCSV(texto) {
 
   if (celda !== "" || fila.length > 0) {
     fila.push(celda);
-
-    if (
-      fila.some(
-        (valor) => String(valor).trim() !== ""
-      )
-    ) {
-      filas.push(fila);
-    }
+    filas.push(fila);
   }
 
   return filas;
 }
 
-function escaparHTML(texto) {
-  const elemento = document.createElement("div");
-  elemento.textContent = texto;
-  return elemento.innerHTML;
+function escapar(texto = "") {
+  return texto.replace(/[&<>"']/g, (caracter) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#039;"
+  })[caracter]);
+}
+
+function formatearPrecio(valor) {
+  const numero = Number(String(valor).replace(",", "."));
+
+  if (Number.isNaN(numero)) {
+    return `S/ ${valor}`;
+  }
+
+  return new Intl.NumberFormat("es-PE", {
+    style: "currency",
+    currency: "PEN"
+  }).format(numero);
+}
+
+async function cargarProductos() {
+  try {
+    const respuesta = await fetch(
+      `${CSV_URL}&t=${Date.now()}`,
+      {
+        cache: "no-store"
+      }
+    );
+
+    if (!respuesta.ok) {
+      throw new Error(`Error HTTP ${respuesta.status}`);
+    }
+
+    const textoCSV = await respuesta.text();
+    const filas = convertirCSV(textoCSV);
+
+    if (filas.length < 2) {
+      throw new Error("La hoja no contiene productos.");
+    }
+
+    const encabezados = filas.shift().map((valor) =>
+      valor
+        .trim()
+        .toLowerCase()
+        .replace(/^\uFEFF/, "")
+    );
+
+    const productos = filas
+      .filter((fila) =>
+        fila.some((celda) => celda.trim() !== "")
+      )
+      .map((fila) =>
+        Object.fromEntries(
+          encabezados.map((encabezado, indice) => [
+            encabezado,
+            (fila[indice] || "").trim()
+          ])
+        )
+      )
+      .filter(
+        (producto) =>
+          producto.activo.toUpperCase() === "SI"
+      );
+
+    productosContenedor.innerHTML = productos
+      .map((producto) => `
+        <article class="producto">
+          <img
+            class="producto-imagen"
+            src="assets/products/${escapar(producto.imagen)}"
+            alt="${escapar(producto.nombre)}"
+            onerror="this.remove()"
+          >
+
+          <div class="producto-contenido">
+            <span class="producto-id">
+              PRODUCTO ${escapar(producto.id)}
+            </span>
+
+            <h2>${escapar(producto.nombre)}</h2>
+
+            <p class="producto-descripcion">
+              ${escapar(producto.descripcion)}
+            </p>
+
+            <div class="producto-pie">
+              <span class="precio">
+                ${formatearPrecio(producto.precio)}
+              </span>
+
+              <button class="boton" type="button">
+                Ver producto
+              </button>
+            </div>
+          </div>
+        </article>
+      `)
+      .join("");
+
+    estado.style.display = "none";
+  } catch (error) {
+    console.error(error);
+
+    estado.innerHTML = `
+      <div class="error">
+        No se pudieron cargar los productos.
+        <br>
+        ${escapar(error.message)}
+      </div>
+    `;
+  }
 }
 
 cargarProductos();
