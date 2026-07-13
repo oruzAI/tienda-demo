@@ -34,7 +34,11 @@ function convertirCSV(texto) {
 
       fila.push(celda);
 
-      if (fila.some((valor) => valor.trim() !== "")) {
+      if (
+        fila.some(
+          (valor) => String(valor).trim() !== ""
+        )
+      ) {
         filas.push(fila);
       }
 
@@ -47,24 +51,39 @@ function convertirCSV(texto) {
 
   if (celda !== "" || fila.length > 0) {
     fila.push(celda);
-    filas.push(fila);
+
+    if (
+      fila.some(
+        (valor) => String(valor).trim() !== ""
+      )
+    ) {
+      filas.push(fila);
+    }
   }
 
   return filas;
 }
 
 function escapar(texto = "") {
-  return texto.replace(/[&<>"']/g, (caracter) => ({
-    "&": "&amp;",
-    "<": "&lt;",
-    ">": "&gt;",
-    '"': "&quot;",
-    "'": "&#039;"
-  })[caracter]);
+  return String(texto).replace(/[&<>"']/g, (caracter) => {
+    const equivalencias = {
+      "&": "&amp;",
+      "<": "&lt;",
+      ">": "&gt;",
+      '"': "&quot;",
+      "'": "&#039;"
+    };
+
+    return equivalencias[caracter];
+  });
 }
 
 function formatearPrecio(valor) {
-  const numero = Number(String(valor).replace(",", "."));
+  const numero = Number(
+    String(valor)
+      .trim()
+      .replace(",", ".")
+  );
 
   if (Number.isNaN(numero)) {
     return `S/ ${valor}`;
@@ -72,97 +91,194 @@ function formatearPrecio(valor) {
 
   return new Intl.NumberFormat("es-PE", {
     style: "currency",
-    currency: "PEN"
+    currency: "PEN",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2
   }).format(numero);
+}
+
+function obtenerURLImagen(valor) {
+  const imagen = String(valor || "").trim();
+
+  const enlaceDrive = imagen.match(
+    /drive\.google\.com\/file\/d\/([a-zA-Z0-9_-]+)/
+  );
+
+  const enlaceConId = imagen.match(
+    /[?&]id=([a-zA-Z0-9_-]+)/
+  );
+
+  const idArchivo =
+    enlaceDrive?.[1] ||
+    enlaceConId?.[1];
+
+  if (idArchivo) {
+    return `https://drive.google.com/thumbnail?id=${idArchivo}&sz=w1600`;
+  }
+
+  if (
+    imagen.startsWith("https://") ||
+    imagen.startsWith("http://")
+  ) {
+    return imagen;
+  }
+
+  return `assets/products/${imagen}`;
 }
 
 async function cargarProductos() {
   try {
+    estado.style.display = "block";
+    estado.textContent = "Cargando productos...";
+
     const respuesta = await fetch(
-      `${CSV_URL}&t=${Date.now()}`,
+      `${CSV_URL}&actualizacion=${Date.now()}`,
       {
         cache: "no-store"
       }
     );
 
     if (!respuesta.ok) {
-      throw new Error(`Error HTTP ${respuesta.status}`);
+      throw new Error(
+        `No se pudo cargar la hoja. Error ${respuesta.status}`
+      );
     }
 
     const textoCSV = await respuesta.text();
     const filas = convertirCSV(textoCSV);
 
     if (filas.length < 2) {
-      throw new Error("La hoja no contiene productos.");
+      throw new Error(
+        "La hoja no contiene productos."
+      );
     }
 
-    const encabezados = filas.shift().map((valor) =>
-      valor
-        .trim()
-        .toLowerCase()
-        .replace(/^\uFEFF/, "")
-    );
+    const encabezados = filas
+      .shift()
+      .map((valor) =>
+        String(valor)
+          .trim()
+          .toLowerCase()
+          .replace(/^\uFEFF/, "")
+      );
 
     const productos = filas
       .filter((fila) =>
-        fila.some((celda) => celda.trim() !== "")
+        fila.some(
+          (celda) =>
+            String(celda).trim() !== ""
+        )
       )
       .map((fila) =>
         Object.fromEntries(
-          encabezados.map((encabezado, indice) => [
-            encabezado,
-            (fila[indice] || "").trim()
-          ])
+          encabezados.map(
+            (encabezado, indice) => [
+              encabezado,
+              String(fila[indice] || "").trim()
+            ]
+          )
         )
-      )
-      .filter(
-        (producto) =>
-          producto.activo.toUpperCase() === "SI"
       );
 
+    if (productos.length === 0) {
+      estado.textContent =
+        "No existen productos para mostrar.";
+      return;
+    }
+
     productosContenedor.innerHTML = productos
-      .map((producto) => `
-        <article class="producto">
-          <img
-            class="producto-imagen"
-            src="assets/products/${escapar(producto.imagen)}"
-            alt="${escapar(producto.nombre)}"
-            onerror="this.remove()"
-          >
+      .map((producto) => {
+        const disponible =
+          String(producto.activo || "")
+            .trim()
+            .toUpperCase() === "SI";
 
-          <div class="producto-contenido">
-            <span class="producto-id">
-              PRODUCTO ${escapar(producto.id)}
+        const claseStock = disponible
+          ? ""
+          : "sin-stock";
+
+        const etiquetaStock = disponible
+          ? ""
+          : `
+            <span class="estado-stock">
+              SIN STOCK
             </span>
+          `;
 
-            <h2>${escapar(producto.nombre)}</h2>
+        const textoBoton = disponible
+          ? "Ver producto"
+          : "Agotado";
 
-            <p class="producto-descripcion">
-              ${escapar(producto.descripcion)}
-            </p>
+        const botonDesactivado = disponible
+          ? ""
+          : "disabled";
 
-            <div class="producto-pie">
-              <span class="precio">
-                ${formatearPrecio(producto.precio)}
+        return `
+          <article class="producto ${claseStock}">
+
+            ${etiquetaStock}
+
+            <img
+              class="producto-imagen"
+              src="${escapar(
+                obtenerURLImagen(producto.imagen)
+              )}"
+              alt="${escapar(producto.nombre)}"
+              loading="lazy"
+              onerror="this.style.display='none'"
+            >
+
+            <div class="producto-contenido">
+
+              <span class="producto-id">
+                PRODUCTO ${escapar(producto.id)}
               </span>
 
-              <button class="boton" type="button">
-                Ver producto
-              </button>
+              <h2>
+                ${escapar(producto.nombre)}
+              </h2>
+
+              <p class="producto-descripcion">
+                ${escapar(producto.descripcion)}
+              </p>
+
+              <div class="producto-pie">
+
+                <span class="precio">
+                  ${formatearPrecio(
+                    producto.precio
+                  )}
+                </span>
+
+                <button
+                  class="boton"
+                  type="button"
+                  ${botonDesactivado}
+                >
+                  ${textoBoton}
+                </button>
+
+              </div>
             </div>
-          </div>
-        </article>
-      `)
+          </article>
+        `;
+      })
       .join("");
 
     estado.style.display = "none";
   } catch (error) {
-    console.error(error);
+    console.error(
+      "Error cargando productos:",
+      error
+    );
 
+    productosContenedor.innerHTML = "";
+
+    estado.style.display = "block";
     estado.innerHTML = `
       <div class="error">
         No se pudieron cargar los productos.
-        <br>
+        <br><br>
         ${escapar(error.message)}
       </div>
     `;
